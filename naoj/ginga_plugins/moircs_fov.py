@@ -5,14 +5,8 @@ class CS_FOV:
         self.canvas = canvas
         self.dc = canvas.dc if hasattr(canvas, 'dc') else canvas.get_draw_classes()
         self.pt_ctr = pt
-        self.scale_x = 1.0  # degrees per pixel
-        self.scale_y = 1.0
         self.pa_rot_deg = 0.0
         self.flip_tf = False
-
-    def set_scale(self, scale_x, scale_y):
-        self.scale_x = scale_x
-        self.scale_y = scale_y
 
     def set_pos(self, pt):
         self.pt_ctr = pt
@@ -38,17 +32,21 @@ class MOIRCS_FOV(CS_FOV):
     def __init__(self, canvas, pt):
         super().__init__(canvas, pt)
         self.moircs_fov = (0.0666667, 0.116667)  # 4x7 arcmin in degrees
+        self.circle_radius_deg = 0.05  # 3 arcmin diameter = 1.5 arcmin radius
+        self.pixscale = 0.117 / 3600  # 0.117 arcsec/pixel converted to degrees/pixel
         self.text_off = 1.0
         self.moircs_box = None
         self._build()
 
     def _build(self):
         x, y = self.pt_ctr
-        # Compute radius in pixels
-        xr = self.moircs_fov[0] * 0.5 / self.scale_x if self.scale_x > 0 else 10.0
-        yr = self.moircs_fov[1] * 0.5 / self.scale_y if self.scale_y > 0 else 10.0
+        # Fixed pixel dimensions based on pixscale
+        xr = (self.moircs_fov[0] * 0.5) / self.pixscale  # Half-width: 2 arcmin / pixscale
+        yr = (self.moircs_fov[1] * 0.5) / self.pixscale  # Half-height: 3.5 arcmin / pixscale
+        radius_pixels = self.circle_radius_deg / self.pixscale  # 1.5 arcmin / pixscale
+        pixel_offset = 280.0  # Fixed offset for dashed lines
+
         dc = self.dc
-        pixel_offset = 280.0  # Fixed offset in pixels
 
         # Detector polygons
         det2 = dc.Polygon(
@@ -72,8 +70,6 @@ class MOIRCS_FOV(CS_FOV):
         )
 
         # FOV circle
-        radius_deg = 3.0 / 60.0  # 3 arcmin
-        radius_pixels = radius_deg / self.scale_x if self.scale_x > 0 else 10.0
         fov_circle = dc.Circle(x, y, radius_pixels, color='white', linewidth=1, fill=False)
 
         # Dashed lines
@@ -96,16 +92,16 @@ class MOIRCS_FOV(CS_FOV):
             return
 
         x, y = self.pt_ctr[:2]
-        # Compute radius in pixels
-        xr = self.moircs_fov[0] * 0.5 / self.scale_x if self.scale_x > 0 else 10.0
-        yr = self.moircs_fov[1] * 0.5 / self.scale_y if self.scale_y > 0 else 10.0
+        # Fixed pixel dimensions
+        xr = (self.moircs_fov[0] * 0.5) / self.pixscale
+        yr = (self.moircs_fov[1] * 0.5) / self.pixscale
+        radius_pixels = self.circle_radius_deg / self.pixscale
         pixel_offset = 280.0
 
         # Update objects
         self.moircs_box.objects[0].x = x
         self.moircs_box.objects[0].y = y
-        radius_deg = 3.0 / 60.0
-        self.moircs_box.objects[0].radius = radius_deg / self.scale_x if self.scale_x > 0 else 10.0
+        self.moircs_box.objects[0].radius = radius_pixels
         self.moircs_box.objects[1].points = np.array(
             [(x - xr, y), (x + xr, y), (x + xr, y + yr), (x - xr, y + yr)], dtype=float
         )  # Det 2
@@ -129,10 +125,6 @@ class MOIRCS_FOV(CS_FOV):
         if self.pa_rot_deg != 0:
             self.moircs_box.rotate_deg([self.pa_rot_deg], [x, y])
 
-    def set_scale(self, scale_x, scale_y):
-        super().set_scale(scale_x, scale_y)
-        self.__update()
-
     def set_pos(self, pt):
         super().set_pos(pt)
         self.__update()
@@ -142,18 +134,11 @@ class MOIRCS_FOV(CS_FOV):
         self.__update()
 
     def scale_to_image(self, img_width, img_height):
-        if img_width <= 0 or img_height <= 0:
-            print(f"Invalid image dimensions: width={img_width}, height={img_height}")
-            return
-        fov_width_deg = self.moircs_fov[0]
-        fov_height_deg = self.moircs_fov[1]
-        scale_x = fov_width_deg / img_width if img_width > 0 else 1.0
-        scale_y = fov_height_deg / img_height if img_height > 0 else 1.0
-        self.set_scale(scale_x, scale_y)
-        print(f"Scaled to image: width={img_width}, height={img_height}, scale_x={scale_x:.6f}, scale_y={scale_y:.6f}")
+        # No dynamic scaling; use fixed pixel scale
+        print(f"Image dimensions: width={img_width}, height={img_height}; using fixed pixel scale {self.pixscale*3600:.3f} arcsec/pixel")
+        self.__update()
 
     def rebuild(self):
         self.remove()
         self._build()
         self.__update()
-
