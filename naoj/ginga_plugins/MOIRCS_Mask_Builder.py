@@ -129,7 +129,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         vbox_slit = Widgets.VBox()
         vbox_slit.set_spacing(6)
 
-        # Display Options (Slit/Hole ID checkbox)
+        # Display Options (Slit/Hole ID, Comments, Show Excluded)
         hbox_sh_display = Widgets.HBox()
         hbox_sh_display.set_spacing(4)
 
@@ -144,43 +144,43 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         self.w.display_comments.add_callback('activated', lambda *args: self.draw_slits())
         hbox_sh_display.add_widget(self.w.display_comments, stretch=0)
 
+        self.w.show_excluded = Widgets.CheckBox("Excluded")
+        self.w.show_excluded.add_callback('activated', lambda w, val: self.toggle_show_excluded(val))
+        hbox_sh_display.add_widget(self.w.show_excluded, stretch=0)
+
         vbox_slit.add_widget(hbox_sh_display, stretch=0)
 
         # Row 1: Show Slit List + Auto Detection
         hbox_view_auto = Widgets.HBox()
         hbox_view_auto.set_spacing(4)
+
         btn_view_params = Widgets.Button("Show Slit List")
         btn_view_params.add_callback('activated', lambda w: self.show_slit_and_hole_info())
+
         btn_auto = Widgets.Button("Auto Detection")
-        btn_auto.add_callback('activated', lambda w: self.show_slit_and_hole_info())
+        btn_auto.add_callback('activated', lambda w: self.auto_detect_overlaps())
+
         hbox_view_auto.add_widget(btn_view_params, stretch=0)
         hbox_view_auto.add_widget(btn_auto, stretch=0)
         vbox_slit.add_widget(hbox_view_auto, stretch=0)
 
-        # Row 2: Add + Edit
+        # Row 2: Add + Edit + Undo
         hbox_add_edit = Widgets.HBox()
         hbox_add_edit.set_spacing(4)
         btn_add = Widgets.Button("Add")
         btn_add.add_callback('activated', lambda w: self.add_slit_or_hole())
         btn_edit = Widgets.Button("Edit")
         btn_edit.add_callback('activated', lambda w: self.edit_slit_or_hole())
-        hbox_add_edit.add_widget(btn_add, stretch=0)
-        hbox_add_edit.add_widget(btn_edit, stretch=0)
-        vbox_slit.add_widget(hbox_add_edit, stretch=0)
-
-        # Row 3: Delete + Undo
-        hbox_del_undo = Widgets.HBox()
-        hbox_del_undo.set_spacing(4)
-        btn_delete = Widgets.Button("Delete")
-        btn_delete.add_callback('activated', lambda w: self.delete_slits_or_holes())
         btn_undo = Widgets.Button("Undo")
         btn_undo.add_callback('activated', lambda w: self.undo_last_edit())
-        hbox_del_undo.add_widget(btn_delete, stretch=0)
-        hbox_del_undo.add_widget(btn_undo, stretch=0)
-        vbox_slit.add_widget(hbox_del_undo, stretch=0)
+        hbox_add_edit.add_widget(btn_add, stretch=0)
+        hbox_add_edit.add_widget(btn_edit, stretch=0)
+        hbox_add_edit.add_widget(btn_undo, stretch=0)
+        vbox_slit.add_widget(hbox_add_edit, stretch=0)
 
         fr_slit.set_widget(vbox_slit)
         vbox.add_widget(fr_slit, stretch=0)
+        
 
         # --- Frame for All Controls ---
         fr_controls = Widgets.Frame("Grism and Spectra Controls")
@@ -468,34 +468,101 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
 
     def show_slit_and_hole_info(self):
         dialog = QDialog()
-        dialog.setWindowTitle("Slit and Hole Parameters")
+        dialog.setWindowTitle("Slit and Hole Manager")
         layout = QVBoxLayout()
+
         scroll = QScrollArea()
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout()
+        scroll.setWidgetResizable(True)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+
+        checkbox_refs = []
 
         for i, shape in enumerate(self.shapes):
-            if shape.get('_deleted'):
-                continue
-            if shape['type'].startswith('B'):
-                info = (f"B{i}: X: {shape.get('x', 0):.2f} | Y: {shape.get('y', 0):.2f} | "
-                        f"Width: {shape.get('width', 100):.2f} | Length: {shape.get('length', 7):.2f} | "
-                        f"Angle: {shape.get('angle', 0):.2f} | Comment: {shape.get('comment', '')}")
-            else:
-                info = (f"C{i}: X: {shape.get('x', 0):.2f} | Y: {shape.get('y', 0):.2f} | "
-                        f"Diameter: {shape.get('diameter', 30):.2f} | Comment: {shape.get('comment', '')}")
-            scroll_layout.addWidget(QLabel(info))
+            shape_type = 'Slit' if shape['type'].startswith('B') else 'Hole'
+            comment = shape.get('comment', '')
+            status = "[Excluded] " if shape.get('_excluded') else ""
+            label = f"{status}{shape_type} #{i} | x={shape['x']:.1f}, y={shape['y']:.1f} | {comment}"
 
-        scroll_widget.setLayout(scroll_layout)
-        scroll.setWidget(scroll_widget)
-        scroll.setWidgetResizable(True)
+            cb = QCheckBox(label)
+            cb.setChecked(not shape.get('_deleted', False))
+            cb.setEnabled(not shape.get('_excluded'))  # prevent toggle for excluded shapes
+
+            def make_callback(index, checkbox):
+                def callback(state):
+                    self.shapes[index]['_deleted'] = not checkbox.isChecked()
+                    self.draw_slits()
+                    self.draw_spectra()
+                return callback
+
+            cb.stateChanged.connect(make_callback(i, cb))
+            checkbox_refs.append(cb)
+            scroll_layout.addWidget(cb)
+
+        scroll_content.setLayout(scroll_layout)
+        scroll.setWidget(scroll_content)
         layout.addWidget(scroll)
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.accept)
-        layout.addWidget(close_btn)
+
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(dialog.accept)
+        layout.addWidget(btn_close)
+
         dialog.setLayout(layout)
-        dialog.resize(600, 400)
         dialog.exec_()
+
+
+    def toggle_show_excluded(self, val):
+        self.show_excluded = val
+        self.draw_slits()
+        self.draw_spectra()
+
+    def auto_detect_overlaps(self):
+        if not self.shapes:
+            QMessageBox.information(None, "Info", "No shapes to analyze.")
+            return
+
+        # Reset exclusions
+        for shape in self.shapes:
+            shape['_excluded'] = False
+
+        excluded_count = 0
+
+        def get_x_bounds(shape):
+            x = shape['x']
+            if shape['type'].startswith('B'):
+                w = shape.get('width', 100.0)
+            else:
+                w = shape.get('diameter', 30.0)
+            return x - w / 2, x + w / 2
+
+        y_center = self.fov_center[1]
+        n = len(self.shapes)
+
+        for i in range(n):
+            s1 = self.shapes[i]
+            if s1.get('_excluded'):
+                continue
+
+            x1_min, x1_max = get_x_bounds(s1)
+            ch1 = s1['y'] < y_center  # True if on Detector 1
+
+            for j in range(i + 1, n):
+                s2 = self.shapes[j]
+                if s2.get('_excluded'):
+                    continue
+
+                ch2 = s2['y'] < y_center
+                if ch1 != ch2:
+                    continue  # skip: different detectors
+
+                x2_min, x2_max = get_x_bounds(s2)
+                if x1_max >= x2_min and x2_max >= x1_min:
+                    self.shapes[j]['_excluded'] = True
+                    excluded_count += 1
+
+        self.draw_slits()
+        self.draw_spectra()
+        QMessageBox.information(None, "Auto Detection", f"Excluded {excluded_count} overlapping shape(s).")
 
     def add_slit_or_hole(self):
         self._undo_stack.append({'shapes': copy.deepcopy(self.shapes)})
@@ -722,39 +789,6 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         dialog.setLayout(layout)
         dialog.exec_()
 
-    def delete_slits_or_holes(self):
-        dialog = QDialog()
-        dialog.setWindowTitle("Delete Slits or Holes")
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Select IDs to delete:"))
-        checkboxes = []
-        index_map = {}
-        for i, shape in enumerate(self.shapes):
-            prefix = 'B' if shape['type'].startswith('B') else 'C'
-            cb = QCheckBox(f"{prefix}{i}: {shape.get('comment', '')}")
-            layout.addWidget(cb)
-            checkboxes.append(cb)
-            index_map[cb] = i
-        def on_confirm():
-            confirm = QMessageBox.question(None, "Confirm", "Do you really want to delete the selected items?",
-                                        QMessageBox.Yes | QMessageBox.No)
-            if confirm != QMessageBox.Yes:
-                return
-            self._undo_stack.append({'shapes': copy.deepcopy(self.shapes)})
-            for cb in checkboxes:
-                if cb.isChecked():
-                    idx = index_map[cb]
-                    self.shapes[idx]['_deleted'] = True
-            self.shapes = [s for s in self.shapes if not s.get('_deleted')]
-            self.draw_slits()
-            self.draw_spectra()
-            dialog.accept()
-        btn = QPushButton("Delete")
-        btn.clicked.connect(on_confirm)
-        layout.addWidget(btn)
-        dialog.setLayout(layout)
-        dialog.exec_()
-
     def undo_last_edit(self):
         if not self._undo_stack:
             print("Nothing to undo")
@@ -808,9 +842,10 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                 obj.tag.startswith("slit") or obj.tag.startswith("label") or obj.tag.startswith("hole")):
                 self.canvas.delete_object_by_tag(obj.tag)
 
+        show_excluded = getattr(self, 'show_excluded', False)
         show_ids = self.w.display_slit_id.get_state()
         show_comments = self.w.display_comments.get_state()
-
+        
         try:
             samplefac = self.common_info.samplefac
             bin_x, bin_y = self.common_info.bin[0], self.common_info.bin[1]
@@ -827,6 +862,8 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         for i, shape in enumerate(self.shapes):
             if shape.get('_deleted'):
                 continue
+            if shape.get('_excluded') and not show_excluded:
+                continue
             x, y = shape['x'], shape['y']
             comment = shape.get('comment', '')
 
@@ -839,7 +876,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                 rect = self.dc.Rectangle(
                     xcen - w / 2, ycen - l / 2,
                     xcen + w / 2, ycen + l / 2,
-                    rotation_deg=angle, color='white', linewidth=1
+                    rotation_deg=angle, color = 'gray' if shape.get('_excluded') else 'white', linewidth=1
                 )
                 rect.coord = 'data'
                 self.canvas.add(rect, tag=f"slit{i}")
@@ -858,7 +895,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                 radius = diameter / 2
                 xcen = (x - xoffset) / bin_x / samplefac
                 ycen = (y - yoffset) / bin_y / samplefac
-                circle = self.dc.Circle(xcen, ycen, radius, color='yellow', linewidth=1)
+                circle = self.dc.Circle(xcen, ycen, radius, color = 'gray' if shape.get('_excluded') else 'yellow', linewidth=1)
                 circle.coord = 'data'
                 self.canvas.add(circle, tag=f"hole{i}")
                 if show_ids:
@@ -911,8 +948,9 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         bottom_length = (wave_start - direct_wave) / dispersion / bin_y / samplefac
         top_length = (direct_wave - wave_end) / dispersion / bin_y / samplefac
         objects_to_draw = []
+       
         for i, shape in enumerate(self.shapes):
-            if shape.get('_deleted'):
+            if shape.get('_deleted') or shape.get('_excluded'):
                 continue
             x, y = shape['x'], shape['y']
             xcen = (x - xoffset) / bin_x / samplefac
