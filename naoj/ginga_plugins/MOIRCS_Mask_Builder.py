@@ -62,7 +62,6 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         if not p_canvas.has_tag('maskbuilder-canvas'):
             p_canvas.add(self.canvas, tag='maskbuilder-canvas')
 
-        # Initialize FOV attributes
         self.fov_center = pt_center
         self.fov_overlay = None
 
@@ -510,7 +509,6 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         dialog.setLayout(layout)
         dialog.exec_()
 
-
     def toggle_show_excluded(self, val):
         self.show_excluded = val
         self.draw_slits()
@@ -876,7 +874,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                 rect = self.dc.Rectangle(
                     xcen - w / 2, ycen - l / 2,
                     xcen + w / 2, ycen + l / 2,
-                    rotation_deg=angle, color = 'gray' if shape.get('_excluded') else 'white', linewidth=1
+                    rotation_deg=angle, color = 'navy' if shape.get('_excluded') else 'white', linewidth=1
                 )
                 rect.coord = 'data'
                 self.canvas.add(rect, tag=f"slit{i}")
@@ -895,7 +893,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                 radius = diameter / 2
                 xcen = (x - xoffset) / bin_x / samplefac
                 ycen = (y - yoffset) / bin_y / samplefac
-                circle = self.dc.Circle(xcen, ycen, radius, color = 'gray' if shape.get('_excluded') else 'yellow', linewidth=1)
+                circle = self.dc.Circle(xcen, ycen, radius, color = 'navy' if shape.get('_excluded') else 'yellow', linewidth=1)
                 circle.coord = 'data'
                 self.canvas.add(circle, tag=f"hole{i}")
                 if show_ids:
@@ -1006,7 +1004,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                 else:
                     d = shape['diameter']
                     line = f"{x:.2f} {y:.2f} {d:.0f} {d:.0f} 0 0 C, {comment}\n"
-                if shape.get('_deleted'):
+                if shape.get('_deleted') or shape.get('_excluded'):
                     f.write(f"# {line}")
                 else:
                     f.write(line)
