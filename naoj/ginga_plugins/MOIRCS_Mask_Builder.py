@@ -573,13 +573,12 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
             choice = combo.currentText()
             dialog.accept()
             self._add_shape_type = 'slit' if choice.startswith("Slit") else 'hole'
-            draw_type = 'rectangle' if self._add_shape_type == 'slit' else 'circle'
             p_canvas = self.fitsimage.get_canvas()
             if not p_canvas.has_object(self.canvas):
                 p_canvas.add(self.canvas, tag='maskbuilder-canvas')
-            self.canvas.set_drawtype(draw_type)
+            self.canvas.set_drawtype('point')
             self.canvas.set_draw_mode('draw')
-            self.canvas.set_callback('draw-event', self._on_draw_event)
+            self.canvas.set_callback('button-press', self._on_click_event)
             self.canvas.ui_set_active(True, viewer=self.fitsimage)
 
         btn_ok.clicked.connect(on_ok)
@@ -615,24 +614,18 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         It must be at least ±min_arcsec_from_center away.
         """
         if not hasattr(self, 'fov_center'):
-            return True  # fallback
+            return True 
 
         y_center = self.fov_center[1]
         min_pixel_dist = min_arcsec_from_center / 0.117  # arcsec → pixels
 
         return abs(y - y_center) >= min_pixel_dist
 
-
-    def _on_draw_event(self, canvas, tag):
-        obj = canvas.get_object_by_tag(tag)
-        if obj is None:
-            return
+    def _on_click_event(self, canvas, button, data_x, data_y):
         self.canvas.set_draw_mode(None)
-        self.canvas.remove_callback('draw-event', self._on_draw_event)
-        self.canvas.delete_object_by_tag(tag)
-        x1, y1, x2, y2 = obj.get_llur()
-        xc = (x1 + x2) / 2
-        yc = (y1 + y2) / 2
+        self.canvas.remove_callback('button-press', self._on_click_event)
+        self.canvas.ui_set_active(False, viewer=self.fitsimage)
+
         try:
             samplefac = self.common_info.samplefac
             bin_x, bin_y = self.common_info.bin
@@ -645,8 +638,8 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         except AttributeError:
             xoffset, yoffset = 0, 0
 
-        x = xc * bin_x * samplefac + xoffset
-        y = yc * bin_y * samplefac + yoffset
+        x = data_x * bin_x * samplefac + xoffset
+        y = data_y * bin_y * samplefac + yoffset
 
         # Check bounds before continuing
         if not self.is_within_fov_bounds(x, y) or not self.is_within_y_arcsec_limit(y):
@@ -656,7 +649,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         dialog = QDialog()
         dialog.setWindowTitle("Confirm New Shape")
         layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"Add new {self._add_shape_type}?"))
+        layout.addWidget(QLabel(f"Add new {self._add_shape_type} at x={x:.1f}, y={y:.1f}?"))
         comment_field = QLineEdit()
         layout.addWidget(QLabel("Comment:"))
         layout.addWidget(comment_field)
