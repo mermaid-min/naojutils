@@ -864,7 +864,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                 rect = self.dc.Rectangle(
                     xcen - w / 2, ycen - l / 2,
                     xcen + w / 2, ycen + l / 2,
-                    rotation_deg=angle, color = 'navy' if shape.get('_excluded') else 'white', linewidth=1
+                    rotation_deg=angle, color = 'purple' if shape.get('_excluded') else 'white', linewidth=1
                 )
                 rect.coord = 'data'
                 self.canvas.add(rect, tag=f"slit{i}")
@@ -883,7 +883,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                 radius = diameter / 2
                 xcen = (x - xoffset) / bin_x / samplefac
                 ycen = (y - yoffset) / bin_y / samplefac
-                circle = self.dc.Circle(xcen, ycen, radius, color = 'navy' if shape.get('_excluded') else 'yellow', linewidth=1)
+                circle = self.dc.Circle(xcen, ycen, radius, color = 'purple' if shape.get('_excluded') else 'yellow', linewidth=1)
                 circle.coord = 'data'
                 self.canvas.add(circle, tag=f"hole{i}")
                 if show_ids:
