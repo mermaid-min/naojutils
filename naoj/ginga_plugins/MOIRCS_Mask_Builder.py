@@ -112,12 +112,6 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         btn_update = Widgets.Button("Update")
         btn_update.add_callback('activated', self.set_fov_center_from_user_input)
         hbox_center.add_widget(btn_update, stretch=0)
-
-        # Reset button
-        btn_reset = Widgets.Button("Reset")
-        btn_reset.add_callback('activated', self.reset_fov_center)
-        hbox_center.add_widget(btn_reset, stretch=0)
-
         fov_controls.add_widget(hbox_center, stretch=0)
 
         fr.set_widget(fov_controls)
@@ -329,11 +323,6 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         else:
             self.logger.warning("FOV overlay not active.")
 
-    def reset_fov_center(self, widget):
-        self.w.fov_center_x.set_value(1084)
-        self.w.fov_center_y.set_value(1786)
-        self.set_fov_center_from_user_input(widget)
-
     def on_fov_changed(self, w=None, state=None):
         if not hasattr(self, 'cb_ch1') or not hasattr(self, 'cb_ch2'):
             self.logger.warning("Checkboxes not initialized; skipping FOV update.")
@@ -480,16 +469,17 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         for i, shape in enumerate(self.shapes):
             shape_type = 'Slit' if shape['type'].startswith('B') else 'Hole'
             comment = shape.get('comment', '')
-            status = "[Excluded] " if shape.get('_excluded') else ""
-            label = f"{status}{shape_type} #{i} | x={shape['x']:.1f}, y={shape['y']:.1f} | {comment}"
+            label = f"{shape_type} #{i} | x={shape['x']:.1f}, y={shape['y']:.1f} | {comment}"
 
             cb = QCheckBox(label)
-            cb.setChecked(not shape.get('_deleted', False))
-            cb.setEnabled(not shape.get('_excluded'))  # prevent toggle for excluded shapes
+            # Checked = included; Unchecked = either _deleted or _excluded
+            cb.setChecked(not shape.get('_deleted', False) and not shape.get('_excluded', False))
 
             def make_callback(index, checkbox):
                 def callback(state):
-                    self.shapes[index]['_deleted'] = not checkbox.isChecked()
+                    checked = checkbox.isChecked()
+                    self.shapes[index]['_deleted'] = not checked
+                    self.shapes[index]['_excluded'] = not checked
                     self.draw_slits()
                     self.draw_spectra()
                 return callback
@@ -756,8 +746,8 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                     if width < 35:
                         QMessageBox.warning(dialog, "Invalid input", "Width must be at least 35.")
                         return
-                    if length < 7:
-                        QMessageBox.warning(dialog, "Invalid input", "Length must be at least 7.")
+                    if length < 6.8:
+                        QMessageBox.warning(dialog, "Invalid input", "Length must be at least 6.8.")
                         return
                 else:
                     diameter = float(current_fields["Diameter:"].text())
