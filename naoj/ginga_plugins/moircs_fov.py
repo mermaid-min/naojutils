@@ -134,7 +134,6 @@ class MOIRCS_FOV(CS_FOV):
         self.__update()
 
     def scale_to_image(self, img_width, img_height):
-        # No dynamic scaling; use fixed pixel scale
         print(f"Image dimensions: width={img_width}, height={img_height}; using fixed pixel scale {self.pixscale*3600:.3f} arcsec/pixel")
         self.__update()
 

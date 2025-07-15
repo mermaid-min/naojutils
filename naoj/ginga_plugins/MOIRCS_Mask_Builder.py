@@ -323,25 +323,6 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         else:
             self.logger.warning("FOV overlay not active.")
 
-    def on_fov_changed(self, w=None, state=None):
-        if not hasattr(self, 'cb_ch1') or not hasattr(self, 'cb_ch2'):
-            self.logger.warning("Checkboxes not initialized; skipping FOV update.")
-            return
-        try:
-            ch1 = self.cb_ch1.get_state()
-            ch2 = self.cb_ch2.get_state()
-            self.logger.info(f"FOV toggle triggered: CH1={ch1}, CH2={ch2}, Widget={w}, State={state}")
-            if ch1 or ch2:
-                self.show_fov_overlay(ch1, ch2)
-            else:
-                self.remove_fov_overlay()
-                self.logger.info("Both channels unchecked; FOV overlay removed.")
-            self.canvas.redraw(whence=0)  # Full redraw for visibility changes
-        except Exception as e:
-            self.logger.error(f"Error in on_fov_changed: {e}")
-            self.remove_fov_overlay()
-            self.canvas.redraw(whence=0)
-
     def show_fov_overlay(self, ch1, ch2):
         width, height = self.fitsimage.get_data_size()
         if width <= 0 or height <= 0:
@@ -359,39 +340,62 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
             pt_center = self.fov_center
 
         try:
-            # Initialize or update FOV overlay
             if not hasattr(self, 'fov_overlay') or self.fov_overlay is None or self.fov_overlay.moircs_box is None:
                 self.logger.info("Creating new FOV overlay")
                 self.remove_fov_overlay()
                 self.fov_overlay = MOIRCS_FOV(self.canvas, pt_center)
                 self.fov_overlay.scale_to_image(width, height)
+            else:
                 self.fov_overlay.set_pos(pt_center)
 
             obj = self.fov_overlay.moircs_box
-            if len(obj.objects) != 8:
-                self.logger.warning(f"Expected 8 objects, got {len(obj.objects)}. Recreating...")
+            if obj is None or len(obj.objects) != 8:
+                self.logger.warning("FOV overlay objects invalid. Rebuilding...")
                 self.fov_overlay.rebuild()
                 obj = self.fov_overlay.moircs_box
 
-            # Unpack objects
+            # Unpack visuals
             fov_circle, det2, det1, fov_label, label1, label2, edge_line_ch1, edge_line_ch2 = obj.objects
 
-            # Update visibility
-            fov_circle.visible = ch1 and ch2
-            fov_label.visible = ch1 and ch2
-            det1.visible = label1.visible = edge_line_ch1.visible = ch1
-            det2.visible = label2.visible = edge_line_ch2.visible = ch2
+            # FOV circle and label are always shown
+            fov_circle.visible = True
+            fov_label.visible = True
+
+            # Show/hide CH1 components
+            det1.visible = ch1
+            label1.visible = ch1
+            edge_line_ch1.visible = ch1
+
+            # Show/hide CH2 components
+            det2.visible = ch2
+            label2.visible = ch2
+            edge_line_ch2.visible = ch2
 
             self.logger.info(f"FOV visibility updated: CH1={ch1}, CH2={ch2}")
-            self.logger.info(f"CH1 elements: Det1={det1.visible}, Label1={label1.visible}, Line1={edge_line_ch1.visible}")
-            self.logger.info(f"CH2 elements: Det2={det2.visible}, Label2={label2.visible}, Line2={edge_line_ch2.visible}")
-            self.logger.info(f"FOV circle: center=({fov_circle.x:.2f}, {fov_circle.y:.2f}), radius={fov_circle.radius:.2f}, visible={fov_circle.visible}")
-            self.logger.info(f"FOV label: visible={fov_label.visible}")
-
-            # Force redraw
             self.canvas.redraw(whence=0)
+
         except Exception as e:
             self.logger.error(f"Error updating FOV overlay: {e}")
+            self.remove_fov_overlay()
+            self.canvas.redraw(whence=0)
+
+    def on_fov_changed(self, w=None, state=None):
+        if not hasattr(self, 'cb_ch1') or not hasattr(self, 'cb_ch2'):
+            self.logger.warning("Checkboxes not initialized; skipping FOV update.")
+            return
+        try:
+            ch1 = self.cb_ch1.get_state()
+            ch2 = self.cb_ch2.get_state()
+            self.logger.info(f"FOV toggle triggered: CH1={ch1}, CH2={ch2}, Widget={w}, State={state}")
+
+            if ch1 or ch2:
+                self.show_fov_overlay(ch1, ch2)
+            else:
+                self.remove_fov_overlay()
+                self.logger.info("Both channels unchecked; FOV overlay removed.")
+                self.canvas.redraw(whence=0)
+        except Exception as e:
+            self.logger.error(f"Error in on_fov_changed: {e}")
             self.remove_fov_overlay()
             self.canvas.redraw(whence=0)
 
