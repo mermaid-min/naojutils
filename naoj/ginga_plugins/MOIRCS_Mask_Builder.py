@@ -314,14 +314,16 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
     def set_fov_center_from_user_input(self, widget):
         x = self.w.fov_center_x.get_value()
         y = self.w.fov_center_y.get_value()
-
+        self.fov_center = (x, y)  # Update internal state
         if hasattr(self, 'fov_overlay') and self.fov_overlay:
             self.fov_overlay.set_pos((x, y))
-            self.fov_center = (x, y)
-            self.canvas.redraw(whence=0)  # Full redraw
+            self.canvas.redraw(whence=0)
+            self.draw_slits()  # Redraw slits to reflect new FOV center
+            self.draw_spectra()  # Redraw spectra to reflect new FOV center
             self.logger.info(f"FOV center updated to: ({x:.1f}, {y:.1f})")
         else:
-            self.logger.warning("FOV overlay not active.")
+            self.logger.warning("FOV overlay not active; initializing.")
+            self.on_fov_changed()  # Trigger FOV overlay update
 
     def show_fov_overlay(self, ch1, ch2):
         width, height = self.fitsimage.get_data_size()
@@ -336,11 +338,14 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         try:
             pt_center = (self.w.fov_center_x.get_value(), self.w.fov_center_y.get_value())
         except AttributeError as e:
-            self.logger.error(f"Error accessing FOV center widgets: {e}")
+            self.logger.warning(f"Error accessing FOV center widgets: {e}. Using fallback center.")
             pt_center = self.fov_center
 
+        self.fov_center = pt_center  # Update internal state
+
         try:
-            if not hasattr(self, 'fov_overlay') or self.fov_overlay is None or self.fov_overlay.moircs_box is None:
+            self.logger.debug(f"show_fov_overlay called with CH1={ch1}, CH2={ch2}")
+            if not hasattr(self, 'fov_overlay') or self.fov_overlay is None:
                 self.logger.info("Creating new FOV overlay")
                 self.remove_fov_overlay()
                 self.fov_overlay = MOIRCS_FOV(self.canvas, pt_center)
@@ -348,32 +353,33 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
             else:
                 self.fov_overlay.set_pos(pt_center)
 
-            obj = self.fov_overlay.moircs_box
-            if obj is None or len(obj.objects) != 8:
-                self.logger.warning("FOV overlay objects invalid. Rebuilding...")
+            # Safely remove detector groups if they exist on canvas
+            for group in [self.fov_overlay.det1_group, self.fov_overlay.det2_group, self.fov_overlay.fov_base]:
+                if group and group in self.canvas.objects:
+                    try:
+                        self.canvas.delete_object(group)
+                        self.logger.debug(f"Removed group from canvas")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to remove group: {e}")
+
+            # Add groups based on ch1 and ch2
+            if ch1 and self.fov_overlay.det1_group:
+                self.canvas.add(self.fov_overlay.det1_group)
+                self.logger.debug("Added det1_group to canvas")
+            if ch2 and self.fov_overlay.det2_group:
+                self.canvas.add(self.fov_overlay.det2_group)
+                self.logger.debug("Added det2_group to canvas")
+
+            # Ensure fov_base is always present
+            if not self.fov_overlay.fov_base:
+                self.logger.warning("fov_base is None; rebuilding overlay")
                 self.fov_overlay.rebuild()
-                obj = self.fov_overlay.moircs_box
-
-            # Unpack visuals
-            fov_circle, det2, det1, fov_label, label1, label2, edge_line_ch1, edge_line_ch2 = obj.objects
-
-            # FOV circle and label are always shown
-            fov_circle.visible = True
-            fov_label.visible = True
-
-            # Show/hide CH1 components
-            det1.visible = ch1
-            label1.visible = ch1
-            edge_line_ch1.visible = ch1
-
-            # Show/hide CH2 components
-            det2.visible = ch2
-            label2.visible = ch2
-            edge_line_ch2.visible = ch2
+            else:
+                self.canvas.add(self.fov_overlay.fov_base)
+                self.logger.debug("Added fov_base to canvas")
 
             self.logger.info(f"FOV visibility updated: CH1={ch1}, CH2={ch2}")
             self.canvas.redraw(whence=0)
-
         except Exception as e:
             self.logger.error(f"Error updating FOV overlay: {e}")
             self.remove_fov_overlay()
@@ -387,26 +393,25 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
             ch1 = self.cb_ch1.get_state()
             ch2 = self.cb_ch2.get_state()
             self.logger.info(f"FOV toggle triggered: CH1={ch1}, CH2={ch2}, Widget={w}, State={state}")
-
             if ch1 or ch2:
                 self.show_fov_overlay(ch1, ch2)
             else:
                 self.remove_fov_overlay()
                 self.logger.info("Both channels unchecked; FOV overlay removed.")
-                self.canvas.redraw(whence=0)
+            self.canvas.redraw(whence=0)
         except Exception as e:
             self.logger.error(f"Error in on_fov_changed: {e}")
             self.remove_fov_overlay()
             self.canvas.redraw(whence=0)
 
     def remove_fov_overlay(self):
-        if hasattr(self, 'fov_overlay') and self.fov_overlay and self.fov_overlay.moircs_box:
+        if hasattr(self, 'fov_overlay') and self.fov_overlay:
             try:
-                self.fov_overlay.remove()
+                self.fov_overlay.remove()  # Calls MOIRCS_FOV.remove() to clean up all groups
                 self.logger.info("FOV overlay removed successfully.")
             except Exception as e:
                 self.logger.error(f"Error removing FOV overlay: {e}")
-        self.fov_overlay = None
+            self.fov_overlay = None
         self.canvas.redraw(whence=0)
 
     def browse_file(self, *args):
@@ -587,38 +592,28 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
     def is_within_fov_bounds(self, x, y):
         """Check if (x, y) is within MOIRCS rectangle in x, and circle radius in y."""
         if not hasattr(self, 'fov_overlay') or self.fov_overlay is None:
-            return True  # Allow if overlay not initialized
+            self.logger.warning("FOV overlay not initialized; assuming position is valid.")
+            return True
 
-        x_center, y_center = self.fov_center
+        x_center, y_center = self.fov_center  # Use self.fov_center for consistency
         fov = self.fov_overlay
         pixscale = fov.pixscale  # deg/pixel
-        arcsec_per_pix = pixscale * 3600
+        xr = (fov.moircs_fov[0] * 0.5) / pixscale  # Rectangle half-width in pixels
+        radius_pix = fov.circle_radius_deg / pixscale  # Circle radius in pixels
 
-        # Rectangle half-width in pixels
-        xr = (fov.moircs_fov[0] * 0.5) / pixscale
-        # Circle radius in pixels
-        radius_pix = fov.circle_radius_deg / pixscale
-
-        # Check if x is within rectangle
         within_x = (x_center - xr) <= x <= (x_center + xr)
-
-        # Check radial distance from center
         r = np.hypot(x - x_center, y - y_center)
         within_radius = r <= radius_pix
-
         return within_x and within_radius
-    
+
     def is_within_y_arcsec_limit(self, y, min_arcsec_from_center=10):
-        """
-        Ensure the slit/hole is not too close to the horizontal centerline (y-axis).
-        It must be at least ±min_arcsec_from_center away.
-        """
-        if not hasattr(self, 'fov_center'):
-            return True 
+        """Ensure the slit/hole is at least ±min_arcsec_from_center from the centerline."""
+        if not hasattr(self, 'fov_center') or not hasattr(self, 'fov_overlay'):
+            self.logger.warning("FOV center or overlay not initialized; assuming position is valid.")
+            return True
 
         y_center = self.fov_center[1]
-        min_pixel_dist = min_arcsec_from_center / 0.117  # arcsec → pixels
-
+        min_pixel_dist = min_arcsec_from_center / (self.fov_overlay.pixscale * 3600)  # arcsec → pixels
         return abs(y - y_center) >= min_pixel_dist
 
     def _on_click_event(self, canvas, button, data_x, data_y):
@@ -641,11 +636,9 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         x = data_x * bin_x * samplefac + xoffset
         y = data_y * bin_y * samplefac + yoffset
 
-        # Check bounds before continuing
         out_of_bounds = not self.is_within_fov_bounds(x, y) or not self.is_within_y_arcsec_limit(y)
         if out_of_bounds:
             QMessageBox.warning(None, "Out of Bounds", "The selected position is outside the allowed FOV, but it will be added.")
-
 
         dialog = QDialog()
         dialog.setWindowTitle("Confirm New Shape")
@@ -734,7 +727,6 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                 x = float(current_fields["X:"].text())
                 y = float(current_fields["Y:"].text())
 
-                # Check bounds here
                 if not self.is_within_fov_bounds(x, y) or not self.is_within_y_arcsec_limit(y):
                     QMessageBox.warning(dialog, "Out of Bounds", "The specified position is outside the allowed FOV.")
                     return
@@ -917,17 +909,14 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         except AttributeError:
             samplefac = 1.0
             bin_x, bin_y = 1, 1
-
         try:
             xoffset = self.xoffset or 0
             yoffset = self.yoffset or 0
         except AttributeError:
             xoffset, yoffset = 0, 0
 
-        fov_center_y = self.w.fov_center_y.get_value() if hasattr(self.w, 'fov_center_y') else 1786
-        if hasattr(self, 'fov_center') and len(self.fov_center) == 2:
-            _, fov_center_y = self.fov_center
-            fov_center_y = (fov_center_y - yoffset) / bin_y / samplefac
+        # Use self.fov_center for consistency
+        fov_center_y = self.fov_center[1] / bin_y / samplefac if hasattr(self, 'fov_center') else 1786 / bin_y / samplefac
         direct_wave = g.get('directwave', 0)
         wave_start = g.get('wavestart', 0)
         wave_end = g.get('waveend', 0)
@@ -936,7 +925,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         bottom_length = (wave_start - direct_wave) / dispersion / bin_y / samplefac
         top_length = (direct_wave - wave_end) / dispersion / bin_y / samplefac
         objects_to_draw = []
-       
+
         for i, shape in enumerate(self.shapes):
             if shape.get('_deleted') or shape.get('_excluded'):
                 continue
