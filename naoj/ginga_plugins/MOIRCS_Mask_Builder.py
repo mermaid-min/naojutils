@@ -173,7 +173,6 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
 
         fr_slit.set_widget(vbox_slit)
         vbox.add_widget(fr_slit, stretch=0)
-        
 
         # --- Frame for All Controls ---
         fr_controls = Widgets.Frame("Grism and Spectra Controls")
@@ -398,10 +397,14 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
             else:
                 self.remove_fov_overlay()
                 self.logger.info("Both channels unchecked; FOV overlay removed.")
+            self.draw_slits()  # Explicitly redraw slits
+            self.draw_spectra()  # Explicitly redraw spectra
             self.canvas.redraw(whence=0)
         except Exception as e:
             self.logger.error(f"Error in on_fov_changed: {e}")
             self.remove_fov_overlay()
+            self.draw_slits()
+            self.draw_spectra()
             self.canvas.redraw(whence=0)
 
     def remove_fov_overlay(self):
@@ -817,46 +820,65 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
 
     def draw_slits(self):
         self.canvas.enable_draw(False)
+
+        # Clear all slit, hole, and label objects
         for obj in list(self.canvas.objects):
             if hasattr(obj, 'tag') and isinstance(obj.tag, str) and (
-                obj.tag.startswith("slit") or obj.tag.startswith("label") or obj.tag.startswith("hole")):
-                self.canvas.delete_object_by_tag(obj.tag)
+                obj.tag.startswith("slit") or obj.tag.startswith("hole") or 
+                obj.tag.startswith("label") or obj.tag.startswith("label_comment")):
+                try:
+                    self.canvas.delete_object_by_tag(obj.tag)
+                except Exception as e:
+                    self.logger.warning(f"Failed to delete object with tag {obj.tag}: {e}")
 
         show_excluded = getattr(self, 'show_excluded', False)
         show_ids = self.w.display_slit_id.get_state()
         show_comments = self.w.display_comments.get_state()
-        
-        try:
-            samplefac = self.common_info.samplefac
-            bin_x, bin_y = self.common_info.bin[0], self.common_info.bin[1]
-        except AttributeError:
-            samplefac = 1.0
-            bin_x, bin_y = 1, 1
+        samplefac = 1.0
+        bin_x, bin_y = 1, 1
+        xoffset, yoffset = getattr(self, 'xoffset', 0), getattr(self, 'yoffset', 0)
 
-        try:
-            xoffset = self.xoffset or 0
-            yoffset = self.yoffset or 0
-        except AttributeError:
-            xoffset, yoffset = 0, 0
+        # Use FOV center for channel assignment
+        y_center = self.fov_center[1] / bin_y / samplefac
+
+        drawn_shapes = 0
+        skipped_shapes = 0
 
         for i, shape in enumerate(self.shapes):
-            if shape.get('_deleted'):
+            if shape.get('_deleted') or (shape.get('_excluded') and not show_excluded):
+                skipped_shapes += 1
                 continue
-            if shape.get('_excluded') and not show_excluded:
-                continue
+
             x, y = shape['x'], shape['y']
             comment = shape.get('comment', '')
 
+            # Convert image coords to canvas coords
+            xcen = (x - xoffset) / bin_x / samplefac
+            ycen = (y - yoffset) / bin_y / samplefac
+
+            # Assign shape to CH1 (ycen <= y_center) or CH2 (ycen > y_center)
+            is_ch1 = ycen <= y_center
+            is_ch2 = ycen > y_center
+
+            # Skip if the shape's channel is unchecked
+            if is_ch1 and not self.cb_ch1.get_state():
+                skipped_shapes += 1
+                continue
+            if is_ch2 and not self.cb_ch2.get_state():
+                skipped_shapes += 1
+                continue
+
+            # Draw slit (rectangle) or hole (circle)
             if shape['type'].startswith('B'):
                 w = shape.get('width', 100.0) / bin_x / samplefac
                 l = shape.get('length', 7.0) / bin_y / samplefac
                 angle = shape.get('angle', 0)
-                xcen = (x - xoffset) / bin_x / samplefac
-                ycen = (y - yoffset) / bin_y / samplefac
                 rect = self.dc.Rectangle(
                     xcen - w / 2, ycen - l / 2,
                     xcen + w / 2, ycen + l / 2,
-                    rotation_deg=angle, color = 'purple' if shape.get('_excluded') else 'white', linewidth=1
+                    rotation_deg=angle,
+                    color='purple' if shape.get('_excluded') else 'white',
+                    linewidth=1
                 )
                 rect.coord = 'data'
                 self.canvas.add(rect, tag=f"slit{i}")
@@ -873,9 +895,8 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
             elif shape['type'].startswith('C'):
                 diameter = shape.get('diameter', 30.0) / samplefac
                 radius = diameter / 2
-                xcen = (x - xoffset) / bin_x / samplefac
-                ycen = (y - yoffset) / bin_y / samplefac
-                circle = self.dc.Circle(xcen, ycen, radius, color = 'purple' if shape.get('_excluded') else 'yellow', linewidth=1)
+                circle = self.dc.Circle(xcen, ycen, radius,
+                                        color='purple' if shape.get('_excluded') else 'yellow', linewidth=1)
                 circle.coord = 'data'
                 self.canvas.add(circle, tag=f"hole{i}")
                 if show_ids:
@@ -888,35 +909,42 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                     comment_text.coord = 'data'
                     self.canvas.add(comment_text, tag=f"label_comment_hole{i}")
 
+            drawn_shapes += 1
+
         self.canvas.enable_draw(True)
-        self.canvas.redraw()
+        self.canvas.redraw(whence=0)
 
     def draw_spectra(self):
         CompoundObject = get_canvas_types().CompoundObject
+        # Clear existing spectra-related objects
         for obj in list(self.canvas.objects):
             if hasattr(obj, 'tag') and isinstance(obj.tag, str) and (
                 obj.tag.startswith("spectrum") or obj.tag.startswith("footprint") or obj.tag.startswith("spectra_bundle")):
-                self.canvas.delete_object_by_tag(obj.tag)
+                try:
+                    self.canvas.delete_object_by_tag(obj.tag)
+                except Exception as e:
+                    self.logger.warning(f"Failed to delete spectra object with tag {obj.tag}: {e}")
+
+        # Skip drawing if spectra display is disabled
         if not self.w.display_spectra.get_state():
             self.fitsimage.redraw()
             return
+
         g = self.grism_info
         if not g:
             return
-        try:
-            samplefac = self.common_info.samplefac
-            bin_x, bin_y = self.common_info.bin[0], self.common_info.bin[1]
-        except AttributeError:
-            samplefac = 1.0
-            bin_x, bin_y = 1, 1
+
+        samplefac = 1.0
+        bin_x, bin_y = 1, 1
         try:
             xoffset = self.xoffset or 0
             yoffset = self.yoffset or 0
         except AttributeError:
             xoffset, yoffset = 0, 0
 
-        # Use self.fov_center for consistency
-        fov_center_y = self.fov_center[1] / bin_y / samplefac if hasattr(self, 'fov_center') else 1786 / bin_y / samplefac
+        # Use FOV center for channel assignment
+        y_center = self.fov_center[1] / bin_y / samplefac
+
         direct_wave = g.get('directwave', 0)
         wave_start = g.get('wavestart', 0)
         wave_end = g.get('waveend', 0)
@@ -926,17 +954,36 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         top_length = (direct_wave - wave_end) / dispersion / bin_y / samplefac
         objects_to_draw = []
 
+        drawn_spectra = 0
+        skipped_spectra = 0
+
         for i, shape in enumerate(self.shapes):
-            if shape.get('_deleted') or shape.get('_excluded'):
+            if shape.get('_deleted') or (shape.get('_excluded') and not getattr(self, 'show_excluded', False)):
+                skipped_spectra += 1
                 continue
+
             x, y = shape['x'], shape['y']
             xcen = (x - xoffset) / bin_x / samplefac
             ycen = (y - yoffset) / bin_y / samplefac
+
+            # Assign shape to CH1 (ycen <= y_center) or CH2 (ycen > y_center)
+            is_ch1 = ycen <= y_center
+            is_ch2 = ycen > y_center
+
+            # Skip if the shape's channel is unchecked
+            if is_ch1 and not self.cb_ch1.get_state():
+                skipped_spectra += 1
+                continue
+            if is_ch2 and not self.cb_ch2.get_state():
+                skipped_spectra += 1
+                continue
+
             if shape['type'].startswith('B'):
                 width = shape.get('width', 100.0) / bin_x / samplefac
             else:
                 width = shape.get('diameter', 30.0) / bin_x / samplefac
-            if ycen > fov_center_y:
+
+            if ycen > y_center:
                 spec_y1 = ycen - top_length
                 spec_y2 = ycen + bottom_length
                 color = 'red'
@@ -944,12 +991,18 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                 spec_y1 = ycen + top_length
                 spec_y2 = ycen - bottom_length
                 color = 'green'
+
             rect = self.dc.Rectangle(xcen - width / 2, spec_y1, xcen + width / 2, spec_y2,
                                     rotation_deg=tilt, color=color, linewidth=1, fill=False)
             rect.coord = 'data'
             rect.tag = f"spectrum_{'slit' if shape['type'].startswith('B') else 'hole'}_{i}"
             objects_to_draw.append(rect)
-        self.canvas.add(CompoundObject(*objects_to_draw), tag="spectra_bundle")
+            drawn_spectra += 1
+
+        if objects_to_draw:
+            self.canvas.add(CompoundObject(*objects_to_draw), tag="spectra_bundle")
+        self.logger.info(f"Drew {drawn_spectra} spectra, skipped {skipped_spectra} spectra")
+
         self.fitsimage.redraw()
 
     def redraw_spectra(self):
