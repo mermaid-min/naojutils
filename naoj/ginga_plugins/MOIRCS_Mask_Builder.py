@@ -642,9 +642,10 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         y = data_y * bin_y * samplefac + yoffset
 
         # Check bounds before continuing
-        if not self.is_within_fov_bounds(x, y) or not self.is_within_y_arcsec_limit(y):
-            QMessageBox.warning(None, "Out of Bounds", "The selected position is outside the allowed FOV.")
-            return
+        out_of_bounds = not self.is_within_fov_bounds(x, y) or not self.is_within_y_arcsec_limit(y)
+        if out_of_bounds:
+            QMessageBox.warning(None, "Out of Bounds", "The selected position is outside the allowed FOV, but it will be added.")
+
 
         dialog = QDialog()
         dialog.setWindowTitle("Confirm New Shape")
@@ -657,6 +658,8 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         def on_confirm():
             comment = comment_field.text()
             shape = {'x': x, 'y': y, 'comment': comment}
+            if out_of_bounds:
+                shape['_excluded'] = True  # Initially excluded from auto detection/export
             if self._add_shape_type == 'slit':
                 shape.update({'type': 'B', 'width': 100, 'length': 7, 'angle': 0, 'priority': '1'})
             else:
