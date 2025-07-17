@@ -544,7 +544,13 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                 continue
 
             x1_min, x1_max = get_x_bounds(s1)
-            ch1 = s1['y'] < y_center  # True if on Detector 1
+            ch1 = s1['y'] < y_center
+
+            if (not self.is_within_fov_bounds(s1['x'], s1['y']) or
+                    not self.is_within_y_arcsec_limit(s1['y'], min_arcsec_from_center=3)):
+                s1['_excluded'] = True
+                excluded_count += 1
+                continue
 
             for j in range(i + 1, n):
                 s2 = self.shapes[j]
@@ -553,16 +559,16 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
 
                 ch2 = s2['y'] < y_center
                 if ch1 != ch2:
-                    continue  # skip: different detectors
+                    continue
 
                 x2_min, x2_max = get_x_bounds(s2)
                 if x1_max >= x2_min and x2_max >= x1_min:
-                    self.shapes[j]['_excluded'] = True
+                    s2['_excluded'] = True
                     excluded_count += 1
 
         self.draw_slits()
         self.draw_spectra()
-        QMessageBox.information(None, "Auto Detection", f"Excluded {excluded_count} overlapping shape(s).")
+        QMessageBox.information(None, "Auto Detection", f"Excluded {excluded_count} shape(s).")
 
     def add_slit_or_hole(self):
         self._undo_stack.append({'shapes': copy.deepcopy(self.shapes)})
