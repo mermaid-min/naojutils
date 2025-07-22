@@ -1,9 +1,111 @@
 """
-MOIRCS_Mask_Builder.py -- Ginga plugin to build masks for MOIRCS
+A plugin to build masks for MOIRCS Instrument
 
-Requirements
-============
-- ginga
+**Plugin Type:** Local
+
+`MOIRCS Mask Builder` is a local plugin, which means it is associated with a channel. An instance can be opened for each channel.
+
+.. note:: This plugin is intended to replace the legacy MDP system. It supports loading and saving of `.mdp` and `.sbr` mask definition files and offers interactive slit and alignment hole editing capabilities on astronomical images with valid WCS.
+
+**Usage**
+
+**1. Load a FITS Image**
+
+* Navigate to `File > Load Image`.
+* Select and open the desired FITS file in the viewer.
+
+**2. Launch the Plugin**
+
+* Go to `Plugins > Spectroscopy > MOIRCS Mask Builder` to activate the plugin panel for the current channel.
+
+**3. Load an MDP File**
+
+* Click the **Browse** button in the plugin.
+* Select an existing `.mdp` file containing mask information.
+* Click **Load** to populate the slit/hole list and overlay elements on the image.
+
+**4. Toggle Detector Channels (New!)**
+
+* Both channels (Ch1 and Ch2) are shown by default.
+* To view channels separately, uncheck the desired channel checkboxes to hide them.
+
+**5. Set the Field of View (FOV) Center**
+
+* Enter the desired center coordinates (X, Y) in the input boxes.
+* Press **Update** to reposition the field overlay accordingly.
+
+**6. Display Options**
+
+* Toggle the following options as needed:
+
+  * **Slit/Hole ID** – Show object IDs in the upper-right corner of each shape.
+  * **Comments** – Display user-entered comments near slits or holes.
+  * **Excluded** – Highlight excluded slits/holes in purple.
+
+**7. View or Manage Slits and Holes**
+
+* Click **Show Slit List** to open the full list of defined slits and holes.
+* Items are displayed in ID order.
+* You can toggle visibility or mark items for deletion (unchecked items will be commented out when saving).
+
+**8. Auto Detection (New!)**
+
+* The plugin automatically detects:
+
+  * Overlapping slits or holes
+  * Out-of-bound placements:
+
+    * Outside circular field boundary
+    * Outside central channel gap
+    * More than ±3 arcsec from the centerline
+* Lower-priority items will be auto-marked as **excluded**.
+* Enable **Excluded** toggle to view these items in purple on the canvas.
+
+**9. Add Slits or Holes**
+
+* Click **Add**, then choose between **Slit** or **Hole** mode.
+* Click on the canvas to place the center of the object.
+* Enter an optional comment in the prompt dialog.
+* A warning will appear if placed out of bounds (user may proceed regardless).
+
+**10. Edit Existing Objects**
+
+* Click **Edit**.
+* Select an existing slit or hole from the dropdown list.
+* Modify dimensions, orientation, or ID.
+* Click **Apply** to update the object.
+
+**11. Delete Slits or Holes**
+
+* Open **Show Slit List**.
+* Uncheck any item to exclude it from future saves (these will be commented out in the `.mdp` file).
+
+**12. Undo Support (New!)**
+
+* Basic undo functionality is now available for recent **Add** and **Edit** actions.
+* Revert your last action with one click.
+
+**13. Toggle Spectral Footprint (New!)**
+
+* Use the **Spectra** checkbox to enable or disable overlaid spectra for slits, improving visibility for mask layout.
+
+**14. Grism Selection and Parameters**
+
+* Default grism is **Zj500**.
+* Select a different grism from the **Grism** dropdown menu.
+* To adjust grism parameters (e.g., tilt, dispersion), enter numeric values in the corresponding fields and press **Update**.
+
+**15. Save to .mdp**
+
+* Click **Save** and use the default `.mdp` format.
+* Enter the desired filename and confirm to save the current layout.
+
+**16. Save to .sbr**
+
+* Change file type to **.sbr** in the save dialog.
+* Click **Save** and confirm filename and FOV center (auto-filled from current settings).
+* Header info includes the original `.mdp` file name and current center coordinates.
+
 """
 
 import sys, os
@@ -11,7 +113,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 from moircs_fov import MOIRCS_FOV
 import numpy as np
 import copy
-from astropy.table import Table
 from qtpy.QtWidgets import (
     QFileDialog, QInputDialog, QVBoxLayout, QLabel, QScrollArea, QWidget,
     QPushButton, QDialog, QComboBox, QLineEdit, QCheckBox, QMessageBox
@@ -27,7 +128,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
     def __init__(self, fv, fitsimage):
         super().__init__(fv, fitsimage)
 
-        width, height = self.fitsimage.get_data_size()
+        width, height = self.fitsimage.get_data_size()  
         x_center = width / 2
         y_center = height / 2
         pt_center = (x_center, y_center)
@@ -222,23 +323,23 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
             "tilt2": "Tilt 2:",
         }
 
-        form = Widgets.VBox()
         self.textentries = {}
+        grid = Widgets.GridBox()
+        grid.set_spacing(4)
 
+        row = 0
         for key in param_fields:
-            hbox = Widgets.HBox()
-            hbox.set_spacing(4)
             lbl = Widgets.Label(labels[key])
             entry = Widgets.TextEntry()
             val = self.grism_info.get(key, 0.0)
             entry.set_text(str(val))
             entry.add_callback('activated', lambda w, k=key: self.on_grism_param_changed(k))
-            hbox.add_widget(lbl, stretch=0)
-            hbox.add_widget(entry, stretch=1)
-            form.add_widget(hbox, stretch=0)
-            self.textentries[key] = entry
 
-        vbox_controls.add_widget(form, stretch=1)
+            grid.add_widget(lbl, row, 0, stretch=0)
+            grid.add_widget(entry, row, 1, stretch=1)
+            self.textentries[key] = entry
+            row += 1
+        vbox_controls.add_widget(grid, stretch=0)
 
         # Update/Reset Grism Buttons
         btn_box = Widgets.HBox()
@@ -293,9 +394,6 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         top.add_widget(sw, stretch=1)
         top.add_widget(btns, stretch=0)
         container.add_widget(top, stretch=1)
-
-        # Initialize FOV display after GUI is built
-        self.logger.info("Initializing FOV display")
         self.on_fov_changed()
 
     def set_entry_value(self, key, val):
@@ -343,7 +441,6 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         self.fov_center = pt_center  # Update internal state
 
         try:
-            self.logger.debug(f"show_fov_overlay called with CH1={ch1}, CH2={ch2}")
             if not hasattr(self, 'fov_overlay') or self.fov_overlay is None:
                 self.logger.info("Creating new FOV overlay")
                 self.remove_fov_overlay()
@@ -376,8 +473,6 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
             else:
                 self.canvas.add(self.fov_overlay.fov_base)
                 self.logger.debug("Added fov_base to canvas")
-
-            self.logger.info(f"FOV visibility updated: CH1={ch1}, CH2={ch2}")
             self.canvas.redraw(whence=0)
         except Exception as e:
             self.logger.error(f"Error updating FOV overlay: {e}")
@@ -1007,7 +1102,6 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
 
         if objects_to_draw:
             self.canvas.add(CompoundObject(*objects_to_draw), tag="spectra_bundle")
-        self.logger.info(f"Drew {drawn_spectra} spectra, skipped {skipped_spectra} spectra")
 
         self.fitsimage.redraw()
 
@@ -1138,7 +1232,6 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         self.shapes.clear()
         self._undo_stack.clear()
         self.remove_fov_overlay()
-        self.logger.info("Plugin stopped and resources cleared.")
 
     def __str__(self):
         return 'moircs_mask_builder'
