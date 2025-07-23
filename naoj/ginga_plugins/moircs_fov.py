@@ -1,5 +1,3 @@
-import numpy as np
-
 class CS_FOV:
     def __init__(self, canvas, pt):
         self.canvas = canvas
@@ -52,6 +50,7 @@ class MOIRCS_FOV(CS_FOV):
         yr = square_size * 0.5 / self.pixscale  # Half of 3.9 arcmin / pixscale
         radius_pixels = self.circle_radius_deg / self.pixscale  # 1.5 arcmin / pixscale
         offset = (square_size - 0.0141667) / 2 / self.pixscale  # Half of (3.9 - 0.85)/2 arcmin
+        half_height = 0.5 / 60 /self.pixscale
 
         dc = self.dc
 
@@ -68,9 +67,10 @@ class MOIRCS_FOV(CS_FOV):
 
         # Detector 1: 3 solid lines + 1 dashed line (top edge)
         det1_bottom = dc.Line(x_offset - xr, y - offset - yr, x_offset + xr, y - offset - yr, color='yellow', linewidth=1)
-        det1_left = dc.Line(x_offset - xr, y - offset - yr, x_offset - xr, y - offset + yr, color='yellow', linewidth=1)
-        det1_right = dc.Line(x_offset + xr, y - offset - yr, x_offset + xr, y - offset + yr, color='yellow', linewidth=1)
-        det1_top = dc.Line(x_offset - xr, y - offset + yr, x_offset + xr, y - offset + yr, color='yellow', linewidth=1, linestyle='dash')
+        det1_left = dc.Line(x_offset - xr, y - offset - yr, x_offset - xr, y + half_height, color='yellow', linewidth=1)
+        det1_right = dc.Line(x_offset + xr, y - offset - yr, x_offset + xr, y + half_height, color='yellow', linewidth=1)
+        det1_top = dc.Line(x_offset - xr, y + half_height, x_offset + xr, y + half_height,
+                      color='yellow', linewidth=1, linestyle='dash')
         label1 = dc.Text(
             x_offset + xr, y - offset - (yr * self.text_off), text='Det 1', color='white', bgcolor='black', bgalpha=1.0
         )
@@ -78,9 +78,10 @@ class MOIRCS_FOV(CS_FOV):
 
         # Detector 2: 3 solid lines + 1 dashed line (bottom edge)
         det2_top = dc.Line(x_offset - xr, y + offset + yr, x_offset + xr, y + offset + yr, color='yellow', linewidth=1)
-        det2_left = dc.Line(x_offset - xr, y + offset - yr, x_offset - xr, y + offset + yr, color='yellow', linewidth=1)
-        det2_right = dc.Line(x_offset + xr, y + offset - yr, x_offset + xr, y + offset + yr, color='yellow', linewidth=1)
-        det2_bottom = dc.Line(x_offset - xr, y + offset - yr, x_offset + xr, y + offset - yr, color='yellow', linewidth=1, linestyle='dash')
+        det2_left = dc.Line(x_offset - xr, y - half_height, x_offset - xr, y + offset + yr, color='yellow', linewidth=1)
+        det2_right = dc.Line(x_offset + xr, y - half_height, x_offset + xr, y + offset + yr, color='yellow', linewidth=1)
+        det2_bottom = dc.Line(x_offset - xr, y - half_height, x_offset + xr, y - half_height,
+                   color='yellow', linewidth=1, linestyle='dash')
         label2 = dc.Text(
             x_offset + xr, y + offset + (yr * self.text_off), text='Det 2', color='white', bgcolor='black', bgalpha=1.0
         )
@@ -102,6 +103,7 @@ class MOIRCS_FOV(CS_FOV):
         yr = square_size * 0.5 / self.pixscale
         radius_pixels = self.circle_radius_deg / self.pixscale
         offset = (square_size - 0.0141667) / 2 / self.pixscale
+        half_height = 0.5 / 60 /self.pixscale
 
         # Update fov_base (always present)
         if self.fov_base:
@@ -122,11 +124,11 @@ class MOIRCS_FOV(CS_FOV):
             self.det1_group.objects[0].x1, self.det1_group.objects[0].y1 = x_offset - xr, y - offset - yr  # Bottom
             self.det1_group.objects[0].x2, self.det1_group.objects[0].y2 = x_offset + xr, y - offset - yr
             self.det1_group.objects[1].x1, self.det1_group.objects[1].y1 = x_offset - xr, y - offset - yr  # Left
-            self.det1_group.objects[1].x2, self.det1_group.objects[1].y2 = x_offset - xr, y - offset + yr
+            self.det1_group.objects[1].x2, self.det1_group.objects[1].y2 = x_offset - xr, y + half_height
             self.det1_group.objects[2].x1, self.det1_group.objects[2].y1 = x_offset + xr, y - offset - yr  # Right
-            self.det1_group.objects[2].x2, self.det1_group.objects[2].y2 = x_offset + xr, y - offset + yr
-            self.det1_group.objects[3].x1, self.det1_group.objects[3].y1 = x_offset - xr, y - offset + yr  # Top (dashed)
-            self.det1_group.objects[3].x2, self.det1_group.objects[3].y2 = x_offset + xr, y - offset + yr
+            self.det1_group.objects[2].x2, self.det1_group.objects[2].y2 = x_offset + xr, y + half_height
+            self.det1_group.objects[3].x1, self.det1_group.objects[3].y1 = x_offset - xr, y + half_height
+            self.det1_group.objects[3].x2, self.det1_group.objects[3].y2 = x_offset + xr, y + half_height
             self.det1_group.objects[4].x, self.det1_group.objects[4].y = x_offset + xr, y - offset - (yr * self.text_off)  # Label1
             self.det1_group.objects[4].rot_deg = self.pa_rot_deg
             if self.flip_tf:
@@ -138,12 +140,12 @@ class MOIRCS_FOV(CS_FOV):
         if self.det2_group:
             self.det2_group.objects[0].x1, self.det2_group.objects[0].y1 = x_offset - xr, y + offset + yr  # Top
             self.det2_group.objects[0].x2, self.det2_group.objects[0].y2 = x_offset + xr, y + offset + yr
-            self.det2_group.objects[1].x1, self.det2_group.objects[1].y1 = x_offset - xr, y + offset - yr  # Left
+            self.det2_group.objects[1].x1, self.det2_group.objects[1].y1 = x_offset - xr, y - half_height  # Left
             self.det2_group.objects[1].x2, self.det2_group.objects[1].y2 = x_offset - xr, y + offset + yr
-            self.det2_group.objects[2].x1, self.det2_group.objects[2].y1 = x_offset + xr, y + offset - yr  # Right
+            self.det2_group.objects[2].x1, self.det2_group.objects[2].y1 = x_offset + xr, y - half_height  # Right
             self.det2_group.objects[2].x2, self.det2_group.objects[2].y2 = x_offset + xr, y + offset + yr
-            self.det2_group.objects[3].x1, self.det2_group.objects[3].y1 = x_offset - xr, y + offset - yr  # Bottom (dashed)
-            self.det2_group.objects[3].x2, self.det2_group.objects[3].y2 = x_offset + xr, y + offset - yr
+            self.det2_group.objects[3].x1, self.det2_group.objects[3].y1 = x_offset - xr, y - half_height
+            self.det2_group.objects[3].x2, self.det2_group.objects[3].y2 = x_offset + xr, y - half_height
             self.det2_group.objects[4].x, self.det2_group.objects[4].y = x_offset + xr, y + offset + (yr * self.text_off)  # Label2
             self.det2_group.objects[4].rot_deg = self.pa_rot_deg
             if self.flip_tf:

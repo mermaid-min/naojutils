@@ -717,7 +717,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
             return True
 
         y_center = self.fov_center[1]
-        min_pixel_dist = min_arcsec_from_center / (self.fov_overlay.pixscale * 3600)  # arcsec → pixels
+        min_pixel_dist = min_arcsec_from_center / (self.fov_overlay.pixscale * 3600)  
         return abs(y - y_center) >= min_pixel_dist
 
     def _on_click_event(self, canvas, button, data_x, data_y):
