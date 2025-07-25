@@ -292,6 +292,21 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
 
         vbox_controls.add_widget(hbox_display, stretch=0)
 
+        # Spectra Dashed Line Interval Dropdown
+        hbox_dashline = Widgets.HBox()
+        hbox_dashline.set_spacing(6)
+        hbox_dashline.add_widget(Widgets.Label("Dashed Lines (pixels):"), stretch=0)
+
+        self.w.dash_interval = Widgets.ComboBox()
+        for val in ['none(default)', '100', '150', '200', '250', '300']:
+            self.w.dash_interval.append_text(val)
+        self.w.dash_interval.set_index(0)
+        self.w.dash_interval.add_callback('activated', lambda w, idx: self.redraw_spectra())
+
+        hbox_dashline.add_widget(self.w.dash_interval, stretch=0)
+        vbox_controls.add_widget(hbox_dashline, stretch=0)
+
+
         # Grism selection
         hbox_grism = Widgets.HBox()
         hbox_grism.set_spacing(6)
@@ -1014,25 +1029,30 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
 
         self.canvas.enable_draw(True)
         self.canvas.redraw(whence=0)
-
+    
     def draw_spectra(self):
-        CompoundObject = get_canvas_types().CompoundObject
-        # Clear existing spectra-related objects
-        for obj in list(self.canvas.objects):
-            if hasattr(obj, 'tag') and isinstance(obj.tag, str) and (
-                obj.tag.startswith("spectrum") or obj.tag.startswith("footprint") or obj.tag.startswith("spectra_bundle")):
-                try:
-                    self.canvas.delete_object_by_tag(obj.tag)
-                except Exception as e:
-                    self.logger.warning(f"Failed to delete spectra object with tag {obj.tag}: {e}")
-
-        # Skip drawing if spectra display is disabled
         if not self.w.display_spectra.get_state():
             self.fitsimage.redraw()
             return
 
+        CompoundObject = get_canvas_types().CompoundObject
+
+        # Remove previously drawn spectra-related objects
+        for obj in list(self.canvas.objects):
+            if hasattr(obj, 'tag') and isinstance(obj.tag, str):
+                if obj.tag.startswith("dashline_") or \
+                obj.tag.startswith("dashline_bundle_") or \
+                obj.tag.startswith("spectrum") or \
+                obj.tag.startswith("footprint") or \
+                obj.tag.startswith("spectra_bundle"):
+                    try:
+                        self.canvas.delete_object_by_tag(obj.tag)
+                    except Exception:
+                        continue
+
         g = self.grism_info
         if not g:
+            self.fitsimage.redraw()
             return
 
         samplefac = 1.0
@@ -1043,46 +1063,84 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         except AttributeError:
             xoffset, yoffset = 0, 0
 
-        # Use FOV center for channel assignment
         y_center = self.fov_center[1] / bin_y / samplefac
-
         direct_wave = g.get('directwave', 0)
         wave_start = g.get('wavestart', 0)
         wave_end = g.get('waveend', 0)
         dispersion = g.get('dispersion', 1)
+
+        if dispersion == 0:
+            self.logger.error("Invalid dispersion: 0")
+            self.fitsimage.redraw()
+            return
+
         tilt = (g.get('tilt1', 0) + g.get('tilt2', 0)) / 2
         bottom_length = (wave_start - direct_wave) / dispersion / bin_y / samplefac
         top_length = (direct_wave - wave_end) / dispersion / bin_y / samplefac
+
         objects_to_draw = []
 
-        drawn_spectra = 0
-        skipped_spectra = 0
+        try:
+            dash_text = (self.w.dash_interval.get_text() or "").strip().lower()
+            valid_intervals = {'100', '150', '200', '250', '300'}
+            if dash_text in valid_intervals:
+                dash_interval = int(dash_text)
+                dash_length = dash_interval / 2
+
+                for i, shape in enumerate(self.shapes):
+                    if shape.get('_deleted') or (shape.get('_excluded') and not getattr(self, 'show_excluded', False)):
+                        continue
+
+                    x = (shape['x'] - xoffset) / bin_x / samplefac
+                    y = (shape['y'] - yoffset) / bin_y / samplefac
+                    if (y <= y_center and not self.cb_ch1.get_state()) or (y > y_center and not self.cb_ch2.get_state()):
+                        continue
+
+                    width = shape.get('width', 100.0) if shape['type'].startswith('B') else shape.get('diameter', 30.0)
+                    width /= bin_x * samplefac
+
+                    if y > y_center:
+                        raw_y1 = y - top_length
+                        raw_y2 = y + bottom_length
+                        color = 'red'
+                    else:
+                        raw_y1 = y + top_length
+                        raw_y2 = y - bottom_length
+                        color = 'green'
+
+                    spec_y1, spec_y2 = sorted([raw_y1, raw_y2])
+
+                    dash_lines = []
+                    current = spec_y1
+                    while current < spec_y2:
+                        dash_y_end = min(current + dash_length / bin_y / samplefac, spec_y2)
+                        if dash_y_end > current:
+                            line = self.dc.Line(x - 5, current, x + 5, current, color=color, linewidth=1, linestyle='dash')
+                            line.coord = 'data'
+                            dash_lines.append(line)
+                        current += dash_length / bin_y / samplefac * 2  # skip + gap
+
+                    if dash_lines:
+                        self.canvas.add(CompoundObject(*dash_lines), tag=f"dashline_bundle_{i}")
+
+
+        except Exception as e:
+            self.logger.error(f"Dashed line drawing failed: {e}", exc_info=True)
+            self.fitsimage.redraw()
+            return
 
         for i, shape in enumerate(self.shapes):
             if shape.get('_deleted') or (shape.get('_excluded') and not getattr(self, 'show_excluded', False)):
-                skipped_spectra += 1
                 continue
 
             x, y = shape['x'], shape['y']
             xcen = (x - xoffset) / bin_x / samplefac
             ycen = (y - yoffset) / bin_y / samplefac
-
-            # Assign shape to CH1 (ycen <= y_center) or CH2 (ycen > y_center)
-            is_ch1 = ycen <= y_center
-            is_ch2 = ycen > y_center
-
-            # Skip if the shape's channel is unchecked
-            if is_ch1 and not self.cb_ch1.get_state():
-                skipped_spectra += 1
-                continue
-            if is_ch2 and not self.cb_ch2.get_state():
-                skipped_spectra += 1
+            if (ycen <= y_center and not self.cb_ch1.get_state()) or (ycen > y_center and not self.cb_ch2.get_state()):
                 continue
 
-            if shape['type'].startswith('B'):
-                width = shape.get('width', 100.0) / bin_x / samplefac
-            else:
-                width = shape.get('diameter', 30.0) / bin_x / samplefac
+            width = shape.get('width', 100.0) if shape['type'].startswith('B') else shape.get('diameter', 30.0)
+            width /= bin_x * samplefac
 
             if ycen > y_center:
                 spec_y1 = ycen - top_length
@@ -1093,12 +1151,14 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                 spec_y2 = ycen - bottom_length
                 color = 'green'
 
-            rect = self.dc.Rectangle(xcen - width / 2, spec_y1, xcen + width / 2, spec_y2,
-                                    rotation_deg=tilt, color=color, linewidth=1, fill=False)
+            rect = self.dc.Rectangle(
+                xcen - width / 2, spec_y1,
+                xcen + width / 2, spec_y2,
+                rotation_deg=tilt, color=color, linewidth=1, fill=False
+            )
             rect.coord = 'data'
             rect.tag = f"spectrum_{'slit' if shape['type'].startswith('B') else 'hole'}_{i}"
             objects_to_draw.append(rect)
-            drawn_spectra += 1
 
         if objects_to_draw:
             self.canvas.add(CompoundObject(*objects_to_draw), tag="spectra_bundle")
