@@ -89,18 +89,26 @@ A plugin to build masks for MOIRCS Instrument
 
 * Use the **Spectra** checkbox to enable or disable overlaid spectra for slits, improving visibility for mask layout.
 
-**14. Grism Selection and Parameters**
+**14. Tick Mark selection**
+
+* Default is **none**.
+* Select a different Tick from the **Tick Marks** dropdown menu.
+* ⚠️ Spectral dashed line rendering is under development. 
+    * Intervals below 200 may degrade performance or impact other features. 
+    * For stability, resetting to the default value is recommended.
+
+**15. Grism Selection and Parameters**
 
 * Default grism is **Zj500**.
 * Select a different grism from the **Grism** dropdown menu.
 * To adjust grism parameters (e.g., tilt, dispersion), enter numeric values in the corresponding fields and press **Update**.
 
-**15. Save to .mdp**
+**16. Save to .mdp**
 
 * Click **Save** and use the default `.mdp` format.
 * Enter the desired filename and confirm to save the current layout.
 
-**16. Save to .sbr**
+**17. Save to .sbr**
 
 * Change file type to **.sbr** in the save dialog.
 * Click **Save** and confirm filename and FOV center (auto-filled from current settings).
@@ -295,10 +303,10 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         # Spectra Dashed Line Interval Dropdown
         hbox_dashline = Widgets.HBox()
         hbox_dashline.set_spacing(6)
-        hbox_dashline.add_widget(Widgets.Label("Dashed Lines (pixels):"), stretch=0)
+        hbox_dashline.add_widget(Widgets.Label("Tick Marks(pixels):"), stretch=0)
 
         self.w.dash_interval = Widgets.ComboBox()
-        for val in ['none(default)', '100', '150', '200', '250', '300']:
+        for val in ['none(default)', '100', '150', '200', '250']:
             self.w.dash_interval.append_text(val)
         self.w.dash_interval.set_index(0)
         self.w.dash_interval.add_callback('activated', lambda w, idx: self.redraw_spectra())
@@ -1031,20 +1039,25 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         self.canvas.redraw(whence=0)
     
     def draw_spectra(self):
+        # Check toggle state first
         if not self.w.display_spectra.get_state():
+            # Clean up any previous spectra-related graphics
+            for obj in list(self.canvas.objects):
+                if hasattr(obj, 'tag') and isinstance(obj.tag, str):
+                    if obj.tag.startswith(("dashline_", "dashline_bundle", "spectrum", "footprint", "spectra_bundle")):
+                        try:
+                            self.canvas.delete_object_by_tag(obj.tag)
+                        except Exception:
+                            continue
             self.fitsimage.redraw()
             return
 
         CompoundObject = get_canvas_types().CompoundObject
 
-        # Remove previously drawn spectra-related objects
+        # Clean up previously drawn spectra-related objects
         for obj in list(self.canvas.objects):
             if hasattr(obj, 'tag') and isinstance(obj.tag, str):
-                if obj.tag.startswith("dashline_") or \
-                obj.tag.startswith("dashline_bundle_") or \
-                obj.tag.startswith("spectrum") or \
-                obj.tag.startswith("footprint") or \
-                obj.tag.startswith("spectra_bundle"):
+                if obj.tag.startswith(("dashline_", "dashline_bundle", "spectrum", "footprint", "spectra_bundle")):
                     try:
                         self.canvas.delete_object_by_tag(obj.tag)
                     except Exception:
@@ -1057,11 +1070,8 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
 
         samplefac = 1.0
         bin_x, bin_y = 1, 1
-        try:
-            xoffset = self.xoffset or 0
-            yoffset = self.yoffset or 0
-        except AttributeError:
-            xoffset, yoffset = 0, 0
+        xoffset = getattr(self, "xoffset", 0)
+        yoffset = getattr(self, "yoffset", 0)
 
         y_center = self.fov_center[1] / bin_y / samplefac
         direct_wave = g.get('directwave', 0)
@@ -1079,13 +1089,16 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         top_length = (direct_wave - wave_end) / dispersion / bin_y / samplefac
 
         objects_to_draw = []
+        dash_groups = []
+
+        # --- Efficient "center-outward" dashed line drawing ---
 
         try:
             dash_text = (self.w.dash_interval.get_text() or "").strip().lower()
-            valid_intervals = {'100', '150', '200', '250', '300'}
+            valid_intervals = {'100', '150', '200', '250'}
             if dash_text in valid_intervals:
                 dash_interval = int(dash_text)
-                dash_length = dash_interval / 2
+                interval_y = dash_interval / bin_y / samplefac
 
                 for i, shape in enumerate(self.shapes):
                     if shape.get('_deleted') or (shape.get('_excluded') and not getattr(self, 'show_excluded', False)):
@@ -1100,35 +1113,49 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                     width /= bin_x * samplefac
 
                     if y > y_center:
-                        raw_y1 = y - top_length
-                        raw_y2 = y + bottom_length
+                        spec_y1 = y - top_length
+                        spec_y2 = y + bottom_length
                         color = 'red'
                     else:
-                        raw_y1 = y + top_length
-                        raw_y2 = y - bottom_length
+                        spec_y1 = y + top_length
+                        spec_y2 = y - bottom_length
                         color = 'green'
 
-                    spec_y1, spec_y2 = sorted([raw_y1, raw_y2])
+                    # Clamp direction
+                    ymin, ymax = sorted([spec_y1, spec_y2])
+                    x_start = x - width / 2
+                    x_end = x + width / 2
 
+                    # Generate lines from center outwards
                     dash_lines = []
-                    current = spec_y1
-                    while current < spec_y2:
-                        dash_y_end = min(current + dash_length / bin_y / samplefac, spec_y2)
-                        if dash_y_end > current:
-                            line = self.dc.Line(x - 5, current, x + 5, current, color=color, linewidth=1, linestyle='dash')
-                            line.coord = 'data'
+                    for direction in [-1, 1]:  # up and down
+                        offset = 0.0
+                        while True:
+                            y_pos = y + direction * offset
+                            if y_pos < ymin or y_pos > ymax:
+                                break
+                            line = self.dc.Line(
+                                x_start, y_pos,
+                                x_end, y_pos,
+                                color=color,
+                                linewidth=0.5,
+                                coord='data'
+                            )
                             dash_lines.append(line)
-                        current += dash_length / bin_y / samplefac * 2  # skip + gap
+                            offset += interval_y
 
                     if dash_lines:
-                        self.canvas.add(CompoundObject(*dash_lines), tag=f"dashline_bundle_{i}")
-
+                        group = CompoundObject(*dash_lines)
+                        group.tag = f"dashline_bundle_{i}"
+                        dash_groups.append(group)
 
         except Exception as e:
-            self.logger.error(f"Dashed line drawing failed: {e}", exc_info=True)
-            self.fitsimage.redraw()
-            return
+            self.logger.warning(f"Dash line rendering skipped: {e}")
 
+        if dash_groups:
+            self.canvas.add(CompoundObject(*dash_groups), tag="dashline_master")
+
+        # --- Spectral Rectangles ---
         for i, shape in enumerate(self.shapes):
             if shape.get('_deleted') or (shape.get('_excluded') and not getattr(self, 'show_excluded', False)):
                 continue
@@ -1154,7 +1181,10 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
             rect = self.dc.Rectangle(
                 xcen - width / 2, spec_y1,
                 xcen + width / 2, spec_y2,
-                rotation_deg=tilt, color=color, linewidth=1, fill=False
+                rotation_deg=tilt,
+                color=color,
+                linewidth=1,
+                fill=False
             )
             rect.coord = 'data'
             rect.tag = f"spectrum_{'slit' if shape['type'].startswith('B') else 'hole'}_{i}"
@@ -1272,7 +1302,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
                         f.write(f"B,{x1_laser:9.4f},{y1_laser:9.4f},{x2_laser:9.4f},{y2_laser:9.4f},{width:9.4f}\n")
                     else:
                         radius = shape['diameter'] / 2 * 0.015 / beta / 0.1038 * pixscale
-                        f.write(f"C,{x1_laser:9.4f},{y1_laser:9.4f},{abs((x2_laser-x1_laser)/2):9.4f}\n")
+                        f.write(f"C,{(x1_laser + x2_laser)/2:9.4f},{(y1_laser + y2_laser)/2:9.4f},{abs((x2_laser-x1_laser)/2):9.4f}\n")
         except IOError as e:
             QMessageBox.critical(None, "Error", f"Failed to write SBR file: {str(e)}")
 
