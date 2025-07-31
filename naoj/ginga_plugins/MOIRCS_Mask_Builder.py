@@ -95,7 +95,7 @@ A plugin to build masks for MOIRCS Instrument
 * Select a different Tick from the **Tick Marks** dropdown menu.
 * ⚠️ Spectral dashed line rendering is under development. 
     * Intervals below 200 may degrade performance or impact other features. 
-    * For stability, resetting to the default value is recommended.
+    * For stability, resetting to the default value is recommended before using other functions.
 
 **15. Grism Selection and Parameters**
 
@@ -303,17 +303,20 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
         # Spectra Dashed Line Interval Dropdown
         hbox_dashline = Widgets.HBox()
         hbox_dashline.set_spacing(6)
-        hbox_dashline.add_widget(Widgets.Label("Tick Marks(pixels):"), stretch=0)
+        hbox_dashline.add_widget(Widgets.Label("Tick Marks (pixels):"), stretch=0)
 
         self.w.dash_interval = Widgets.ComboBox()
-        for val in ['none(default)', '100', '150', '200', '250']:
+        for val in ['none(default)','50', '100', '150', '200', '250', '300']:
             self.w.dash_interval.append_text(val)
         self.w.dash_interval.set_index(0)
-        self.w.dash_interval.add_callback('activated', lambda w, idx: self.redraw_spectra())
+
+        self.w.dash_interval.add_callback('activated', lambda w, idx: (
+        self.show_dashline_change_warning() if self.w.dash_interval.get_text() in {'50','100', '150', '200', '250','300'} else None,
+        self.redraw_spectra()
+))
 
         hbox_dashline.add_widget(self.w.dash_interval, stretch=0)
         vbox_controls.add_widget(hbox_dashline, stretch=0)
-
 
         # Grism selection
         hbox_grism = Widgets.HBox()
@@ -1095,7 +1098,7 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
 
         try:
             dash_text = (self.w.dash_interval.get_text() or "").strip().lower()
-            valid_intervals = {'100', '150', '200', '250'}
+            valid_intervals = {'50', '100', '150', '200', '250', '300'}
             if dash_text in valid_intervals:
                 dash_interval = int(dash_text)
                 interval_y = dash_interval / bin_y / samplefac
@@ -1197,6 +1200,15 @@ class MOIRCS_Mask_Builder(GingaPlugin.LocalPlugin):
 
     def redraw_spectra(self):
         self.draw_spectra()
+
+    def show_dashline_change_warning(self):
+        QMessageBox.warning(None,  # or self.fv.w.root if available
+            "Spectral Dash Line Notice",
+            "⚠️ Spectral dashed line rendering is under development.\n\n"
+            "For stability, it is recommended to reset the interval to the default \n"
+            "before using other functions."
+)
+
 
     def save_file(self):
         format_choice = self.w.save_format.get_text()
